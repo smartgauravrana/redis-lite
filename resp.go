@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 )
 
 // DeserializeRESP takes a RESP string and returns the parsed message.
@@ -18,14 +19,15 @@ func DeserializeRESP(input []byte) (interface{}, error) {
 		return nil, err
 	}
 
+
 	switch dataType {
-	case '+':
+	case '+': // simple string
 		data, err := reader.ReadString('\n')
 		return data[:len(data)-2], err  // remove "\r\n"
-	case '-':
+	case '-': // errors
 		data, err := reader.ReadString('\n')
 		return data[:len(data)-2], err  // remove "\r\n"
-	case ':':
+	case ':': // integer
 		data, err := reader.ReadString('\n')
 		return data[:len(data)-2], err  // remove "\r\n"
 	case '$':
@@ -49,11 +51,110 @@ func DeserializeRESP(input []byte) (interface{}, error) {
 		reader.ReadByte()  // read the trailing "\n"
 		return string(data), err
 	case '*':
-		// Handle arrays (further implementation needed)
-		return nil, errors.New("array deserialization not implemented yet")
+		// Handle arrays (using DeserializeRESPArray)
+		return DeserializeRESPArray(input)
 	default:
 		return nil, errors.New("invalid RESP type")
 	}
+}
+
+// DeserializeRESPArray deserializes a RESP array.
+func DeserializeRESPArray(input []byte) ([]interface{}, error) {
+	reader := bufio.NewReader(bytes.NewReader(input))
+
+	// Check for the asterisk (*) which indicates the start of an array
+	firstChar, err := reader.ReadByte()
+	if err != nil {
+		return nil, err
+	}
+	if firstChar != '*' {
+		return nil, errors.New("not an RESP array")
+	}
+
+	// Read the number of elements in the array
+	arrayLengthStr, err := reader.ReadString('\n')
+	if err != nil {
+		return nil, err
+	}
+	arrayLengthStr = strings.Trim(arrayLengthStr, "\r\n")
+	arrayLength, err := strconv.Atoi(arrayLengthStr)
+	if err != nil {
+		return nil, err
+	}
+
+	// Initialize the array to hold the elements
+	result := make([]interface{}, arrayLength)
+
+	// Read each element of the array
+	for i := 0; i < arrayLength; i++ {
+		// Read the first byte of the element to determine its type
+		elementType, err := reader.ReadByte()
+		if err != nil {
+			return nil, err
+		}
+
+		switch elementType {
+		case '+':
+			// Simple string
+			data, err := reader.ReadString('\n')
+			if err != nil {
+				return nil, err
+			}
+			result[i] = strings.Trim(data, "\r\n")
+		case '-':
+			// Error
+			data, err := reader.ReadString('\n')
+			if err != nil {
+				return nil, err
+			}
+			result[i] = errors.New(strings.Trim(data, "\r\n"))
+		case ':':
+			// Integer
+			data, err := reader.ReadString('\n')
+			if err != nil {
+				return nil, err
+			}
+			intValue, err := strconv.Atoi(strings.Trim(data, "\r\n"))
+			if err != nil {
+				return nil, err
+			}
+			result[i] = intValue
+		case '$':
+			// Bulk string or null bulk string
+			lengthStr, err := reader.ReadString('\n')
+			if err != nil {
+				return nil, err
+			}
+			lengthStr = strings.Trim(lengthStr, "\r\n")
+			length, err := strconv.Atoi(lengthStr)
+			if err != nil {
+				return nil, err
+			}
+			if length == -1 {
+				result[i] = nil // Null bulk string
+			} else {
+				data := make([]byte, length)
+				_, err := reader.Read(data)
+				if err != nil {
+					return nil, err
+				}
+				// Read the trailing CRLF
+				reader.Discard(2)
+				result[i] = string(data)
+			}
+		case '*':
+			// Nested array (recursively deserialize)
+			nestedArray, err := DeserializeRESPArray(input[1:])
+			if err != nil {
+				return nil, err
+			}
+			result[i] = nestedArray
+		default:
+			return nil, errors.New("unknown RESP type")
+		}
+	}
+
+	return result, nil
 }
 
 
