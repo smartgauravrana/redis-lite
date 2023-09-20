@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net"
 	"reflect"
+	"strings"
 )
 
 
@@ -31,15 +32,26 @@ func handleClient(conn net.Conn) {
 
 
 		cmdSlice := cmd.([]interface{});
-		fmt.Println("length of cmd: ", len(cmdSlice))
-		command := cmdSlice[0]
 
+		str,ok := cmdSlice[0].(string)
+		var command string
+
+		if(ok){
+			command = strings.ToUpper(str)
+		} else{
+			fmt.Println("not string!", cmd)
+			return;
+		}
 
         switch command {
         case "PING":
             PING(conn)
         case "ECHO":
             ECHO(conn, cmdSlice)
+		case "SET":
+			SET(conn, cmdSlice)
+		case "GET":
+			GET(conn, cmdSlice)
         default:
             fmt.Println("Unknown command:", cmd)
 			conn.Write([]byte("*0\r\n"))
